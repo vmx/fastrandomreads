@@ -11,6 +11,8 @@ use glommio::{
 use pretty_bytes::converter;
 
 const NODE_SIZE: usize = 32;
+const OFFSETS_FILE: &str = "/tmp/parentcache/v28-sdr-parent-2aa9c77c3e58259481351cc4be2079cc71e1c9af39700866545c043bfa30fb42.cache";
+const DATA_FILE: &str = "/tmp/random.data";
 
 //// Basd on https://github.com/DataDog/glommio/blob/74c6c02183e87500214046c7f00ef9a2d27f0703/examples/storage.rs#L110
 async fn read_file_to_memory(mut stream: DmaStreamReader, buffer_size: usize) -> Vec<u32> {
@@ -74,7 +76,10 @@ fn main() {
 
     let executor = LocalExecutor::default();
     executor.run(async {
-        let offsets_file = ImmutableFileBuilder::new("/tmp/parentcache/v28-sdr-parent-2aa9c77c3e58259481351cc4be2079cc71e1c9af39700866545c043bfa30fb42.cache").build_existing().await.unwrap();
+        let offsets_file = ImmutableFileBuilder::new(OFFSETS_FILE)
+            .build_existing()
+            .await
+            .unwrap();
         //let offsets_reader = DmaStreamReaderBuilder::new(offsets_file).build();
         let offsets_reader = offsets_file.stream_reader().build();
 
@@ -83,7 +88,10 @@ fn main() {
         let offsets_data = read_file_to_memory(offsets_reader, buffer_size).await;
         println!("vmx: read_offsets len: {}", offsets_data.len());
 
-        let data_file = ImmutableFileBuilder::new("/tmp/parentcache/v28-sdr-parent-2aa9c77c3e58259481351cc4be2079cc71e1c9af39700866545c043bfa30fb42.cache").build_existing().await.unwrap();
+        let data_file = ImmutableFileBuilder::new(DATA_FILE)
+            .build_existing()
+            .await
+            .unwrap();
         read_at_random_offsets(data_file, offsets_data).await;
     });
 }
