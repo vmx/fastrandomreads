@@ -6,7 +6,7 @@ use glommio::{
         DmaStreamReader, ImmutableFile, ImmutableFileBuilder, MergedBufferLimit,
         ReadAmplificationLimit,
     },
-    LocalExecutor,
+    LocalExecutorBuilder,
 };
 use pretty_bytes::converter;
 
@@ -49,23 +49,37 @@ async fn read_file_to_memory(mut stream: DmaStreamReader, buffer_size: usize) ->
 
 async fn read_at_random_offsets(file: ImmutableFile, offsets: Vec<u32>) {
     let max_buffer_size = 4096;
-    let num_parallel_reads = 10;
+    let num_many_reads = 140;
+
+    // NOTE 2023-01-20: Only used to make sure that the optimizer doesn't optimize things ways.
+    let mut bytes_read = 0;
 
     //GO ON HERE and also spawn multiple threads as https://github.com/DataDog/glommio/blob/74c6c02183e87500214046c7f00ef9a2d27f0703/examples/storage.rs#L267 does
-    for chunk in offsets.chunks(num_parallel_reads) {
+    for chunk in offsets.chunks(num_many_reads) {
+        //offsets.chunks(num_many_reads).for_each(|chunk| {
         let iovs: Vec<(u64, usize)> = chunk
             .iter()
-            .map(|offset| (u64::from(*offset), NODE_SIZE))
+            .map(|offset| (u64::from(*offset) * NODE_SIZE as u64, NODE_SIZE))
             .collect();
-        //println!("vmx: do a random many read: {:?}", iovs);
-        file.read_many(
-            futures_lite::stream::iter(iovs),
-            MergedBufferLimit::Custom(max_buffer_size),
-            ReadAmplificationLimit::NoAmplification,
-        )
-        .for_each(|_| {})
-        .await;
+
+        let result = file
+            .read_many(
+                futures_lite::stream::iter(iovs),
+                MergedBufferLimit::Custom(max_buffer_size),
+                ReadAmplificationLimit::NoAmplification,
+            )
+            //.for_each(|_| {})
+            .map(|data| {
+                //println!("vmx: what's the output: {:?}", data.unwrap().1);
+                data.unwrap().1
+            })
+            .collect::<Vec<_>>()
+            .await;
+        for item in result {
+            bytes_read += item.len();
+        }
     }
+    println!("vmx: bytes read: {}", bytes_read);
 }
 
 fn main() {
@@ -74,24 +88,26 @@ fn main() {
     //Keep the random offsets we want to read from in memory.
     //let mut read_offsets: Vec::<u8> = Vec::with_capacity(2 * 512 * 1024 * 1024);
 
-    let executor = LocalExecutor::default();
-    executor.run(async {
-        let offsets_file = ImmutableFileBuilder::new(OFFSETS_FILE)
-            .build_existing()
-            .await
-            .unwrap();
-        //let offsets_reader = DmaStreamReaderBuilder::new(offsets_file).build();
-        let offsets_reader = offsets_file.stream_reader().build();
+    let executor = LocalExecutorBuilder::default()
+        .spawn(|| async move {
+            let offsets_file = ImmutableFileBuilder::new(OFFSETS_FILE)
+                .build_existing()
+                .await
+                .unwrap();
+            //let offsets_reader = DmaStreamReaderBuilder::new(offsets_file).build();
+            let offsets_reader = offsets_file.stream_reader().build();
 
-        let buffer_size = 4096;
-        //Keep the random offsets we want to read from in memory.
-        let offsets_data = read_file_to_memory(offsets_reader, buffer_size).await;
-        println!("vmx: read_offsets len: {}", offsets_data.len());
+            let buffer_size = 4096;
+            //Keep the random offsets we want to read from in memory.
+            let offsets_data = read_file_to_memory(offsets_reader, buffer_size).await;
+            println!("vmx: read_offsets len: {}", offsets_data.len());
 
-        let data_file = ImmutableFileBuilder::new(DATA_FILE)
-            .build_existing()
-            .await
-            .unwrap();
-        read_at_random_offsets(data_file, offsets_data).await;
-    });
+            let data_file = ImmutableFileBuilder::new(DATA_FILE)
+                .build_existing()
+                .await
+                .unwrap();
+            read_at_random_offsets(data_file, offsets_data).await;
+        })
+        .unwrap();
+    executor.join().unwrap();
 }
