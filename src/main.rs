@@ -78,6 +78,9 @@ async fn read_at_random_offsets(file: ImmutableFile, offsets: Vec<u32>) {
         for item in result {
             bytes_read += item.len();
         }
+        if bytes_read % (1024 * 1024) == 0 {
+            println!("vmx: bytes read: {}", converter::convert(bytes_read as _));
+        }
     }
     println!("vmx: bytes read: {}", bytes_read);
 }
